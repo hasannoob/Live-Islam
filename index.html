@@ -68,7 +68,7 @@
             backdrop-filter: blur(10px);
             border: 1px solid rgba(245, 158, 11, 0.4); /* গোল্ডেন স্ট্রোক */
             border-radius: 1.5rem;
-            transition: background-color 0.5s ease, border-color 0.5s ease;
+            transition: background-color 0.5s ease, border-color 0.5s ease, box-shadow 0.5s ease, transform 0.5s ease;
         }
 
         /* --- Light Theme for Home Page --- */
@@ -118,6 +118,22 @@
             background: rgba(255, 255, 255, 0.7);
             backdrop-filter: blur(12px);
             border-top: 1px solid rgba(0, 0, 0, 0.08);
+        }
+
+        /* --- নতুন অ্যানিমেশন কোড --- */
+        @keyframes pulse-glow {
+          0%, 100% {
+            box-shadow: 0 0 5px rgba(251, 191, 36, 0.4), 0 0 10px rgba(251, 191, 36, 0.3);
+            transform: scale(1);
+          }
+          50% {
+            box-shadow: 0 0 20px rgba(251, 191, 36, 0.7), 0 0 30px rgba(251, 191, 36, 0.5);
+            transform: scale(1.02);
+          }
+        }
+        .current-prayer-animation {
+          animation: pulse-glow 2.5s infinite ease-in-out;
+          border-color: #fbbf24 !important; /* Glow ইফেক্টের সাথে মিলানোর জন্য বর্ডার রঙ */
         }
     </style>
 </head>
@@ -246,7 +262,7 @@
             renderDailyHadith();
             setupAudioPlayer();
             switchTab('home'); 
-            setInterval(updateTimeBasedUI, 60000); // প্রতি মিনিটে থিম চেক করবে
+            setInterval(updateTimeBasedUI, 60000); // প্রতি মিনিটে থিম ও অ্যানিমেশন চেক করবে
             setTimeout(() => { document.getElementById('loading-screen').style.display = 'none'; }, 1500);
         });
         
@@ -281,16 +297,42 @@
         async function fetchPrayerTimes(lat, lng, isDefault = false) {
              document.querySelector('#current-location span').innerText = isDefault ? 'ঢাকা (ডিফল্ট)' : 'আপনার অবস্থান';
             try {
-                const res = await fetch(`https://api.aladhan.com/v1/timings?latitude=${lat}&longitude=${lng}&method=2`);
-                if (!res.ok) throw new Error('API request failed');
-                const data = await res.json();
-                cachedTimings = data.data.timings;
+                // ধাপ ১: আজকের নামাজের সঠিক সময়সূচী এবং আজকের গ্রেগরিয়ান তারিখ আনা
+                const timingsRes = await fetch(`https://api.aladhan.com/v1/timings?latitude=${lat}&longitude=${lng}&method=2`);
+                if (!timingsRes.ok) throw new Error('Prayer Times API request failed');
+                const timingsData = await timingsRes.json();
+
+                // আজকের নামাজের সময় এবং গ্রেগরিয়ান তারিখ সংরক্ষণ করুন
+                cachedTimings = timingsData.data.timings;
+                const gregorianDateStr = timingsData.data.date.gregorian.date; // ফরম্যাট: "DD-MM-YYYY"
+
+                // ধাপ ২: আজকের গ্রেগরিয়ান তারিখ থেকে একদিন আগের তারিখ বের করা
+                const [day, month, year] = gregorianDateStr.split('-').map(Number);
+                const today = new Date(year, month - 1, day); // মাস 0-ভিত্তিক (জানুয়ারি=0)
+
+                const yesterday = new Date(today);
+                yesterday.setDate(today.getDate() - 1); // একদিন বিয়োগ করা হলো
+
+                // আগের দিনের তারিখটিকে DD-MM-YYYY ফরম্যাটে প্রস্তুত করা
+                const yesterdayFormatted = `${String(yesterday.getDate()).padStart(2, '0')}-${String(yesterday.getMonth() + 1).padStart(2, '0')}-${yesterday.getFullYear()}`;
+
+                // ধাপ ৩: আগের দিনের তারিখ ব্যবহার করে সঠিক হিজরি তারিখ আনা
+                const hijriRes = await fetch(`https://api.aladhan.com/v1/gToH?date=${yesterdayFormatted}`);
+                if (!hijriRes.ok) throw new Error('Hijri Conversion API request failed');
+                const hijriData = await hijriRes.json();
+                const adjustedHijri = hijriData.data.hijri;
+
+                // ধাপ ৪: আজকের নামাজের সময়সূচী এবং একদিন আগের হিজরি তারিখ দিয়ে UI আপডেট করা
                 renderVerticalPrayerTimes(cachedTimings);
-                renderHijri(data.data.date.hijri);
+                renderHijri(adjustedHijri); // সমন্বিত (adjusted) হিজরি তারিখ ব্যবহার করা হলো
                 startIftarSehriCountdown();
-                updateTimeBasedUI(); // নতুন ফাংশন কল
+                updateTimeBasedUI();
+                
+                // প্রথমবার লোডের সময় অ্যানিমেশন চালু করা
+                highlightCurrentPrayer();
+
             } catch (e) {
-                console.error("Prayer Times API Error:", e);
+                console.error("API Error:", e);
                 document.getElementById('iftar-sehri-info').innerText = 'সময়সূচী লোড হয়নি';
                 document.getElementById('hijri-date-string').innerText = 'নেটওয়ার্ক সংযোগ চেক করুন';
             }
@@ -303,18 +345,20 @@
             return date;
         }
 
+        // *** পরিবর্তিত ফাংশন ***
         function renderVerticalPrayerTimes(times) {
             const container = document.getElementById('prayer-times-list-vertical');
             if (!container) return;
             const prayerList = [
-                {n: 'সেহরির শেষ সময়', t: times.Imsak, i: '🌙'}, {n: 'ফজর', t: times.Fajr, i: '🌅'},
-                {n: 'সূর্যোদয়', t: times.Sunrise, i: '🔆'}, {n: 'যোহর', t: times.Dhuhr, i: '☀️'},
-                {n: 'আসর', t: times.Asr, i: '🌤️'}, {n: 'ইফতার', t: times.Maghrib, i: '🌇'},
-                {n: 'এশা', t: times.Isha, i: '🌃'}
+                {n: 'সেহরির শেষ সময়', t: times.Imsak, i: '🌙', key: 'Imsak'}, {n: 'ফজর', t: times.Fajr, i: '🌅', key: 'Fajr'},
+                {n: 'সূর্যোদয়', t: times.Sunrise, i: '🔆', key: 'Sunrise'}, {n: 'যোহর', t: times.Dhuhr, i: '☀️', key: 'Dhuhr'},
+                {n: 'আসর', t: times.Asr, i: '🌤️', key: 'Asr'}, {n: 'ইফতার', t: times.Maghrib, i: '🌇', key: 'Maghrib'},
+                {n: 'এশা', t: times.Isha, i: '🌃', key: 'Isha'}
             ];
             container.innerHTML = prayerList.map(p => {
                 const isSpecial = p.n.includes('সেহরি') || p.n.includes('ইফতার');
-                return `<div class="glass-card p-3 flex items-center gap-4 ${isSpecial ? 'border-amber-400/50' : ''}">
+                // প্রতিটি ওয়াক্তের জন্য একটি ইউনিক আইডি যুক্ত করা হয়েছে
+                return `<div id="prayer-${p.key}" class="glass-card p-3 flex items-center gap-4 ${isSpecial ? 'border-amber-400/50' : ''}">
                     <span class="text-2xl">${p.i}</span>
                     <div class="flex-1"><span class="font-bold">${p.n}</span></div>
                     <span class="text-sm font-black text-amber-400 font-mono">${convertTo12H(p.t)}</span>
@@ -322,6 +366,7 @@
             }).join('');
         }
         
+        // *** পরিবর্তিত ফাংশন ***
         function updateTimeBasedUI() {
             if (!cachedTimings) return;
             const now = new Date();
@@ -350,6 +395,52 @@
                     body.classList.add('light-theme');
                 } else { // রাতের বেলা
                     body.classList.remove('light-theme');
+                }
+            }
+            
+            // ৩. প্রতি মিনিটে বর্তমান ওয়াক্তের অ্যানিমেশন আপডেট করা
+            highlightCurrentPrayer();
+        }
+
+        // *** নতুন ফাংশন ***
+        function highlightCurrentPrayer() {
+            if (!cachedTimings) return;
+
+            // প্রথমে সব অ্যানিমেশন মুছে ফেলুন
+            document.querySelectorAll('#prayer-times-list-vertical > div').forEach(div => {
+                div.classList.remove('current-prayer-animation');
+            });
+
+            const now = new Date();
+            const times = {
+                fajr: parseTime(cachedTimings.Fajr),
+                sunrise: parseTime(cachedTimings.Sunrise),
+                dhuhr: parseTime(cachedTimings.Dhuhr),
+                asr: parseTime(cachedTimings.Asr),
+                maghrib: parseTime(cachedTimings.Maghrib),
+                isha: parseTime(cachedTimings.Isha)
+            };
+
+            let currentPrayerId = null;
+
+            // বর্তমান ওয়াক্ত নির্ধারণ
+            if (now >= times.fajr && now < times.sunrise) {
+                currentPrayerId = 'prayer-Fajr';
+            } else if (now >= times.dhuhr && now < times.asr) {
+                currentPrayerId = 'prayer-Dhuhr';
+            } else if (now >= times.asr && now < times.maghrib) {
+                currentPrayerId = 'prayer-Asr';
+            } else if (now >= times.maghrib && now < times.isha) {
+                currentPrayerId = 'prayer-Maghrib';
+            } else if (now >= times.isha || now < times.fajr) { // এশার পর থেকে ফজরের আগ পর্যন্ত
+                currentPrayerId = 'prayer-Isha';
+            }
+
+            // যদি কোনো ওয়াক্ত চলমান থাকে, তাহলে অ্যানিমেশন যুক্ত করুন
+            if (currentPrayerId) {
+                const currentPrayerEl = document.getElementById(currentPrayerId);
+                if (currentPrayerEl) {
+                    currentPrayerEl.classList.add('current-prayer-animation');
                 }
             }
         }
