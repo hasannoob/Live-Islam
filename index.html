@@ -154,7 +154,7 @@
                         <div class="w-10 h-10 bg-gray-700/50 rounded-2xl flex items-center justify-center text-white font-bold border border-white/10">LI</div>
                         <h1 class="font-black text-white leading-none text-xl">লাইভ ইসলাম</h1>
                     </div>
-                    <div id="current-location" class="text-[10px] bg-gray-700/50 px-3 py-1 rounded-full text-white font-bold flex items-center gap-1 border border-white/10">
+                    <div id="current-location" class="text-xs bg-gray-700/50 px-3 py-1.5 rounded-full text-white font-bold flex items-center gap-1 border border-white/10">
                         <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clip-rule="evenodd"></path></svg>
                         <span>লোড...</span>
                     </div>
@@ -295,45 +295,53 @@
         function getLocation() {
             navigator.geolocation?.getCurrentPosition(
                 pos => fetchPrayerTimes(pos.coords.latitude, pos.coords.longitude),
-                () => fetchPrayerTimes(23.8103, 90.4125, true)
+                () => fetchPrayerTimes(23.8103, 90.4125, true) // ফলব্যাক হিসেবে ঢাকা
             );
         }
 
         async function fetchPrayerTimes(lat, lng, isDefault = false) {
-             document.querySelector('#current-location span').innerText = isDefault ? 'ঢাকা (ডিফল্ট)' : 'আপনার অবস্থান';
+            // *** নতুন কোড: লোকেশনের নাম দেখানো ***
+            if (isDefault) {
+                document.querySelector('#current-location span').innerText = 'ঢাকা (ডিফল্ট)';
+            } else {
+                try {
+                    const geoRes = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lng}&localityLanguage=bn`);
+                    if (!geoRes.ok) throw new Error('Reverse geocoding failed');
+                    const geoData = await geoRes.json();
+                    const locationName = geoData.city || geoData.locality || 'আপনার অবস্থান';
+                    document.querySelector('#current-location span').innerText = locationName;
+                } catch (geoError) {
+                    console.error("Geolocation name error:", geoError);
+                    document.querySelector('#current-location span').innerText = 'আপনার অবস্থান';
+                }
+            }
+
+            // *** বাকি কোড আগের মতোই ***
             try {
-                // ধাপ ১: আজকের নামাজের সঠিক সময়সূচী এবং আজকের গ্রেগরিয়ান তারিখ আনা
                 const timingsRes = await fetch(`https://api.aladhan.com/v1/timings?latitude=${lat}&longitude=${lng}&method=2`);
                 if (!timingsRes.ok) throw new Error('Prayer Times API request failed');
                 const timingsData = await timingsRes.json();
 
-                // আজকের নামাজের সময় এবং গ্রেগরিয়ান তারিখ সংরক্ষণ করুন
                 cachedTimings = timingsData.data.timings;
-                const gregorianDateStr = timingsData.data.date.gregorian.date; // ফরম্যাট: "DD-MM-YYYY"
+                const gregorianDateStr = timingsData.data.date.gregorian.date; 
 
-                // ধাপ ২: আজকের গ্রেগরিয়ান তারিখ থেকে একদিন আগের তারিখ বের করা
                 const [day, month, year] = gregorianDateStr.split('-').map(Number);
-                const today = new Date(year, month - 1, day); // মাস 0-ভিত্তিক (জানুয়ারি=0)
+                const today = new Date(year, month - 1, day);
 
                 const yesterday = new Date(today);
-                yesterday.setDate(today.getDate() - 1); // একদিন বিয়োগ করা হলো
+                yesterday.setDate(today.getDate() - 1); 
 
-                // আগের দিনের তারিখটিকে DD-MM-YYYY ফরম্যাটে প্রস্তুত করা
                 const yesterdayFormatted = `${String(yesterday.getDate()).padStart(2, '0')}-${String(yesterday.getMonth() + 1).padStart(2, '0')}-${yesterday.getFullYear()}`;
 
-                // ধাপ ৩: আগের দিনের তারিখ ব্যবহার করে সঠিক হিজরি তারিখ আনা
                 const hijriRes = await fetch(`https://api.aladhan.com/v1/gToH?date=${yesterdayFormatted}`);
                 if (!hijriRes.ok) throw new Error('Hijri Conversion API request failed');
                 const hijriData = await hijriRes.json();
                 const adjustedHijri = hijriData.data.hijri;
 
-                // ধাপ ৪: আজকের নামাজের সময়সূচী এবং একদিন আগের হিজরি তারিখ দিয়ে UI আপডেট করা
                 renderVerticalPrayerTimes(cachedTimings);
-                renderHijri(adjustedHijri); // সমন্বিত (adjusted) হিজরি তারিখ ব্যবহার করা হলো
+                renderHijri(adjustedHijri);
                 startIftarSehriCountdown();
                 updateTimeBasedUI();
-                
-                // প্রথমবার লোডের সময় অ্যানিমেশন চালু করা
                 highlightCurrentPrayer();
 
             } catch (e) {
@@ -350,7 +358,6 @@
             return date;
         }
 
-        // *** পরিবর্তিত ফাংশন ***
         function renderVerticalPrayerTimes(times) {
             const container = document.getElementById('prayer-times-list-vertical');
             if (!container) return;
@@ -362,7 +369,6 @@
             ];
             container.innerHTML = prayerList.map(p => {
                 const isSpecial = p.n.includes('সেহরি') || p.n.includes('ইফতার');
-                // প্রতিটি ওয়াক্তের জন্য একটি ইউনিক আইডি যুক্ত করা হয়েছে
                 return `<div id="prayer-${p.key}" class="glass-card p-3 flex items-center gap-4 ${isSpecial ? 'border-amber-400/50' : ''}">
                     <span class="text-2xl">${p.i}</span>
                     <div class="flex-1"><span class="font-bold">${p.n}</span></div>
@@ -371,7 +377,6 @@
             }).join('');
         }
         
-        // *** পরিবর্তিত ফাংশন ***
         function updateTimeBasedUI() {
             if (!cachedTimings) return;
             const now = new Date();
@@ -383,7 +388,6 @@
                 maghrib: parseTime(cachedTimings.Maghrib), isha: parseTime(cachedTimings.Isha)
             };
 
-            // ১. ডাইনামিক ব্যাকগ্রাউন্ড আপডেট
             let bgClass = 'bg-isha';
             if (now >= times.fajr && now < times.sunrise) bgClass = 'bg-fajr';
             else if (now >= times.sunrise && now < times.dhuhr) bgClass = 'bg-dhuhr';
@@ -392,56 +396,39 @@
             else if (now >= times.maghrib && now < times.isha) bgClass = 'bg-maghrib';
             container.className = 'absolute inset-0 transition-all duration-1000 ' + bgClass;
 
-            // ২. হোম পেজের থিম আপডেট
             const isHomeActive = document.getElementById('home').classList.contains('active');
             if (isHomeActive) {
-                // সূর্যোদয় থেকে সূর্যাস্ত পর্যন্ত দিনের বেলা
                 if (now >= times.sunrise && now < times.maghrib) {
                     body.classList.add('light-theme');
-                } else { // রাতের বেলা
+                } else { 
                     body.classList.remove('light-theme');
                 }
             }
-            
-            // ৩. প্রতি মিনিটে বর্তমান ওয়াক্তের অ্যানিমেশন আপডেট করা
             highlightCurrentPrayer();
         }
 
-        // *** নতুন ফাংশন ***
         function highlightCurrentPrayer() {
             if (!cachedTimings) return;
 
-            // প্রথমে সব অ্যানিমেশন মুছে ফেলুন
             document.querySelectorAll('#prayer-times-list-vertical > div').forEach(div => {
                 div.classList.remove('current-prayer-animation');
             });
 
             const now = new Date();
             const times = {
-                fajr: parseTime(cachedTimings.Fajr),
-                sunrise: parseTime(cachedTimings.Sunrise),
-                dhuhr: parseTime(cachedTimings.Dhuhr),
-                asr: parseTime(cachedTimings.Asr),
-                maghrib: parseTime(cachedTimings.Maghrib),
-                isha: parseTime(cachedTimings.Isha)
+                fajr: parseTime(cachedTimings.Fajr), sunrise: parseTime(cachedTimings.Sunrise),
+                dhuhr: parseTime(cachedTimings.Dhuhr), asr: parseTime(cachedTimings.Asr),
+                maghrib: parseTime(cachedTimings.Maghrib), isha: parseTime(cachedTimings.Isha)
             };
 
             let currentPrayerId = null;
 
-            // বর্তমান ওয়াক্ত নির্ধারণ
-            if (now >= times.fajr && now < times.sunrise) {
-                currentPrayerId = 'prayer-Fajr';
-            } else if (now >= times.dhuhr && now < times.asr) {
-                currentPrayerId = 'prayer-Dhuhr';
-            } else if (now >= times.asr && now < times.maghrib) {
-                currentPrayerId = 'prayer-Asr';
-            } else if (now >= times.maghrib && now < times.isha) {
-                currentPrayerId = 'prayer-Maghrib';
-            } else if (now >= times.isha || now < times.fajr) { // এশার পর থেকে ফজরের আগ পর্যন্ত
-                currentPrayerId = 'prayer-Isha';
-            }
+            if (now >= times.fajr && now < times.sunrise) currentPrayerId = 'prayer-Fajr';
+            else if (now >= times.dhuhr && now < times.asr) currentPrayerId = 'prayer-Dhuhr';
+            else if (now >= times.asr && now < times.maghrib) currentPrayerId = 'prayer-Asr';
+            else if (now >= times.maghrib && now < times.isha) currentPrayerId = 'prayer-Maghrib';
+            else if (now >= times.isha || now < times.fajr) currentPrayerId = 'prayer-Isha';
 
-            // যদি কোনো ওয়াক্ত চলমান থাকে, তাহলে অ্যানিমেশন যুক্ত করুন
             if (currentPrayerId) {
                 const currentPrayerEl = document.getElementById(currentPrayerId);
                 if (currentPrayerEl) {
@@ -490,20 +477,18 @@
             const header = document.getElementById('hero-header');
             const body = document.body;
             
-            // প্রথমে DOM এ ট্যাব সক্রিয় করুন
             document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
             document.getElementById(tabId)?.classList.add('active');
             document.querySelectorAll('.nav-btn').forEach(btn => {
                 btn.classList.toggle('active', btn.dataset.tab === tabId);
             });
 
-            // নতুন সক্রিয় ট্যাবের উপর ভিত্তি করে UI আপডেট করুন
             if (tabId === 'home') {
                 header.style.display = 'block';
-                updateTimeBasedUI(); // এটি সঠিক থিম সেট করবে
+                updateTimeBasedUI();
             } else {
                 header.style.display = 'none';
-                body.classList.remove('light-theme'); // অন্য সব ট্যাবের জন্য ডার্ক থিম
+                body.classList.remove('light-theme');
             }
         }
 
